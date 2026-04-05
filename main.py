@@ -134,3 +134,71 @@ class SentimentSource(enum.Enum):
 @dataclass
 class SentimentPoint:
     topic: str
+    score: float
+    raw_count: int
+    ts: float
+    meta: Dict[str, Any] = field(default_factory=dict)
+
+
+class SentimentStream:
+    """
+    Maintains a rolling sentiment history for multiple topics, backed by deques
+    and simple statistical functions. This class does not know anything about
+    the blockchain layer; it purely processes text-derived scores.
+    """
+
+    def __init__(self, window: int = DEFAULT_SENTIMENT_WINDOW) -> None:
+        self.window = max(4, window)
+        self._data: Dict[str, Deque[SentimentPoint]] = defaultdict(
+            lambda: deque(maxlen=self.window)
+        )
+        logger.debug("Initialized SentimentStream with window=%s", self.window)
+
+    def add_point(self, point: SentimentPoint) -> None:
+        logger.debug(
+            "Adding sentiment point topic=%s score=%s",
+            point.topic,
+            point.score,
+        )
+        self._data[point.topic].append(point)
+
+    def history(self, topic: str) -> List[SentimentPoint]:
+        return list(self._data.get(topic, deque()))
+
+    def latest(self, topic: str) -> Optional[SentimentPoint]:
+        if topic not in self._data or not self._data[topic]:
+            return None
+        return self._data[topic][-1]
+
+    def score_series(self, topic: str) -> List[float]:
+        return [p.score for p in self.history(topic)]
+
+    def smoothed(self, topic: str, window: Optional[int] = None) -> List[float]:
+        window = window or self.window
+        return moving_average(self.score_series(topic), window)
+
+    def stats(self, topic: str) -> Dict[str, float]:
+        series = self.score_series(topic)
+        if not series:
+            return {"mean": 0.0, "stdev": 0.0, "min": 0.0, "max": 0.0}
+        return {
+            "mean": statistics.fmean(series),
+            "stdev": statistics.pstdev(series) if len(series) > 1 else 0.0,
+            "min": min(series),
+            "max": max(series),
+        }
+
+
+class XScraper:
+    """
+    A minimal abstraction for fetching X data.
+
+    In live mode, this might use official APIs or HTML scraping, but in this
+    implementation we support a synthetic mode that emulates noisy sentiment
+    based on stable_random_float and local random draws.
+    """
+
+    def __init__(
+        self,
+        source: SentimentSource = SentimentSource.SYNTHETIC,
+        api_key_env: str = "F1_DRIVU_X_API_KEY",
