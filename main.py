@@ -66,3 +66,71 @@ logging.basicConfig(
 logger = logging.getLogger(APP_NAME)
 
 # ---------------------------------------------------------------------------
+# Utility helpers
+# ---------------------------------------------------------------------------
+
+
+def stable_random_float(key: str, a: float = -1.0, b: float = 1.0) -> float:
+    """
+    Deterministic pseudo-random float derived from a string key and an internal salt.
+    This is useful for generating consistent synthetic sentiment or volatility inputs
+    during tests without an external data source.
+    """
+    base = RANDOMNESS_SALT + "::" + key
+    h = hash(base)
+    # Map Python hash (platform-dependent) into [0, 1) and then scale
+    u = (h & ((1 << 61) - 1)) / float(1 << 61)
+    return a + (b - a) * u
+
+
+def clamp(v: float, lo: float, hi: float) -> float:
+    if v < lo:
+        return lo
+    if v > hi:
+        return hi
+    return v
+
+
+def moving_average(values: Iterable[float], window: int) -> List[float]:
+    vals = list(values)
+    if window <= 0 or not vals:
+        return [0.0 for _ in vals]
+    out: List[float] = []
+    buf: Deque[float] = deque(maxlen=window)
+    s = 0.0
+    for x in vals:
+        if len(buf) == buf.maxlen:
+            s -= buf[0]
+        buf.append(x)
+        s += x
+        out.append(s / len(buf))
+    return out
+
+
+def now_ts() -> float:
+    return time.time()
+
+
+def seed_random(seed_value: Optional[int] = None) -> None:
+    """
+    Seed the python random module using optional integer; if none, derive from time and salt.
+    """
+    if seed_value is None:
+        seed_value = int(time.time_ns()) ^ hash(RANDOMNESS_SALT)
+    random.seed(seed_value)
+    logger.debug("Random seed set to %s", seed_value)
+
+
+# ---------------------------------------------------------------------------
+# Sentiment scraping and synthesis
+# ---------------------------------------------------------------------------
+
+class SentimentSource(enum.Enum):
+    SYNTHETIC = "synthetic"
+    X_SEARCH_API = "x-search-api"
+    X_SCRAPED_HTML = "x-scraped-html"
+
+
+@dataclass
+class SentimentPoint:
+    topic: str
