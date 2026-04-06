@@ -202,3 +202,71 @@ class XScraper:
         self,
         source: SentimentSource = SentimentSource.SYNTHETIC,
         api_key_env: str = "F1_DRIVU_X_API_KEY",
+    ) -> None:
+        self.source = source
+        self.api_key_env = api_key_env
+        self._api_key = os.environ.get(api_key_env, "")
+        logger.info("XScraper initialized with source=%s", self.source.value)
+
+    def _ensure_requests(self) -> None:
+        if requests is None:
+            raise RuntimeError("requests library not available")
+
+    def _live_search_stub(self, topic: str) -> Tuple[int, float]:
+        """
+        Placeholder for a real X search; currently returns pseudo-random counts/scores.
+        """
+        base_key = f"live::{topic}::{int(now_ts() // 60)}"
+        count = int(50 + abs(stable_random_float(base_key, -40.0, 85.0)))
+        sentiment_shift = clamp(stable_random_float(base_key + "::s", -0.9, 0.9), -1.0, 1.0)
+        noise = random.uniform(-0.35, 0.35)
+        score = clamp(sentiment_shift + noise, -1.0, 1.0)
+        return count, score
+
+    def _synthetic_search(self, topic: str) -> Tuple[int, float]:
+        base_key = f"synthetic::{topic}::{int(now_ts() // 120)}"
+        count = int(25 + abs(stable_random_float(base_key, -20.0, 50.0)))
+        drift = stable_random_float(base_key + "::drift", -0.5, 0.5)
+        jitter = random.uniform(-0.45, 0.45)
+        score = clamp(drift + jitter, -1.0, 1.0)
+        return count, score
+
+    def fetch_sentiment(self, topic: str) -> SentimentPoint:
+        """
+        Pull sentiment information for a given topic and return a SentimentPoint.
+        """
+        if self.source == SentimentSource.SYNTHETIC:
+            raw_count, score = self._synthetic_search(topic)
+        else:
+            raw_count, score = self._live_search_stub(topic)
+
+        point = SentimentPoint(
+            topic=topic,
+            score=score,
+            raw_count=raw_count,
+            ts=now_ts(),
+            meta={
+                "source": self.source.value,
+                "api_key_present": bool(self._api_key),
+            },
+        )
+        logger.debug("Fetched sentiment for topic=%s score=%s", topic, score)
+        return point
+
+
+# ---------------------------------------------------------------------------
+# Strategy modeling and AI decision logic
+# ---------------------------------------------------------------------------
+
+class StrategyDecision(enum.Enum):
+    HOLD = "hold"
+    BUY = "buy"
+    SELL = "sell"
+    SCALE_UP = "scale_up"
+    SCALE_DOWN = "scale_down"
+    EXIT = "exit"
+
+
+@dataclass
+class TradeInstruction:
+    decision: StrategyDecision
