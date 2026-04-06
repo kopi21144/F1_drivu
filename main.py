@@ -270,3 +270,71 @@ class StrategyDecision(enum.Enum):
 @dataclass
 class TradeInstruction:
     decision: StrategyDecision
+    confidence: float
+    notional: float
+    commentary: str
+    sentiment_snapshot: Dict[str, Any]
+    risk_score: float
+    created_at: float = field(default_factory=now_ts)
+
+
+@dataclass
+class StrategyProfile:
+    name: str
+    onchain_id: Optional[str]
+    base_notional: float
+    max_notional: float
+    sentiment_topic: str
+    min_trend_score: float
+    max_trend_score: float
+    cool_down_blocks: int
+    expiry_block: Optional[int]
+    leverage: float
+    volatility_bias: float
+    trend_following_weight: float
+    mean_reversion_weight: float
+    risk_aversion: float
+    created_at: float = field(default_factory=now_ts)
+    last_update: float = field(default_factory=now_ts)
+
+    def describe(self) -> Dict[str, Any]:
+        return dataclasses.asdict(self)
+
+
+class AIDecisionEngine:
+    """
+    A lightweight, transparent AI layer that maps sentiment time series
+    into high-level trade instructions. This is intentionally rule-based
+    and explainable, with tunable weights rather than opaque models.
+    """
+
+    def __init__(self, sentiment_stream: SentimentStream) -> None:
+        self.sentiment_stream = sentiment_stream
+        self._profiles: Dict[str, StrategyProfile] = {}
+        logger.info("AIDecisionEngine initialized")
+
+    def register_profile(self, profile: StrategyProfile) -> None:
+        logger.info("Registering strategy profile name=%s", profile.name)
+        self._profiles[profile.name] = profile
+
+    def profiles(self) -> List[StrategyProfile]:
+        return list(self._profiles.values())
+
+    def profile(self, name: str) -> Optional[StrategyProfile]:
+        return self._profiles.get(name)
+
+    def _trend_signal(self, topic: str) -> float:
+        series = self.sentiment_stream.score_series(topic)
+        if len(series) < 4:
+            return 0.0
+        tail = series[-4:]
+        head = series[: len(series) - 4]
+        if not head:
+            return 0.0
+        mean_tail = statistics.fmean(tail)
+        mean_head = statistics.fmean(head)
+        delta = mean_tail - mean_head
+        return clamp(delta, -1.0, 1.0)
+
+    def _volatility_signal(self, topic: str) -> float:
+        stats = self.sentiment_stream.stats(topic)
